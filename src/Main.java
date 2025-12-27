@@ -58,7 +58,10 @@ public class Main {
             StringBuilder response = new StringBuilder();
 
             for (Product c : productobject.getAll()) {
-                response.append(c.getSteamLogin())
+                response
+                        .append(c.getproductID())
+                        .append(" | ")
+                        .append(c.getSteamLogin())
                         .append(" | ")
                         .append(c.getSteamPassword())
                         .append(" | ")
@@ -73,6 +76,7 @@ public class Main {
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
+
 
         server.createContext("/importaccounts", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {

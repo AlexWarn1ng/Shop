@@ -31,6 +31,7 @@ public class ProductRepository {
 
             while (rs.next()) {
                 list.add(new Product(
+                        rs.getString("productid"),
                         rs.getString("steamlogin"),
                         rs.getString("steampassword"),
                         rs.getString("emailaddress"),
