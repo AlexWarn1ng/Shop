@@ -18,25 +18,10 @@ public class DataBaseConnector {
                       this.database = database;
         }
 
-       public void connect() {
-            if(conn != null){ return; }
-
-            String ConnectionUrl = "jdbc:postgresql://" + addressHost + ":" + port + "/" + database;
-
-            try{
-                conn = DriverManager.getConnection(ConnectionUrl, username, password);
-                System.out.println("Connected to " + ConnectionUrl);
-            }
-
-            catch (SQLException e) {
-                throw new RuntimeException("DB connect failed: " + ConnectionUrl, e);
-            }
-       }
-    public Connection getConnection() {
-        if (conn == null) {
-            throw new IllegalStateException("ERROR: DB is not connected");
-        }
-        return conn;
+    public Connection getConnection() throws SQLException {
+        String url = "jdbc:postgresql://" + addressHost + ":" + port + "/" + database;
+        return DriverManager.getConnection(url, username, password);
     }
+
 
 }

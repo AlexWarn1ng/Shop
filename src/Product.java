@@ -8,6 +8,8 @@ import java.sql.SQLException;
 import java.util.Properties;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import javax.crypto.SecretKey;
+import java.util.Base64;
 
 public class Product {
     private final String productID;

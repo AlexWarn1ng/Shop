@@ -7,6 +7,9 @@ import java.sql.SQLException;
 import java.util.Properties;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 public class Main {
     public static void main(String[] args) throws Exception {
@@ -23,6 +26,11 @@ public class Main {
         String addressHost = p.getProperty("address");
         String port = p.getProperty("port");
         String database = p.getProperty("database");
+        String aesKeyBase64 = p.getProperty("aes_key");
+        if (aesKeyBase64 == null || aesKeyBase64.isEmpty()) {
+            throw new RuntimeException("aes_key is missing in config.txt");
+        }
+        SecretKey aesKey = CryptoUtil.keyFromBase64(aesKeyBase64);
 
         try{
             if (username == null || password == null || addressHost == null || database == null || port == null || port.isEmpty() || username.isEmpty() || password.isEmpty() || addressHost.isEmpty() || database.isEmpty()){
@@ -38,26 +46,26 @@ public class Main {
             System.out.println("address=" + addressHost);
             System.out.println("port=" + port);
             System.out.println("database=" + database);
-
+            System.out.println("SecretKey (AesKey) LOADED");
 
         DataBaseConnector dbConnection = new DataBaseConnector(username, password, addressHost, port, database);
-        dbConnection.connect();
         HttpServer server;
 
         try {
             server = HttpServer.create(new InetSocketAddress(8080), 0);
+            server.setExecutor(java.util.concurrent.Executors.newFixedThreadPool(8));
         } catch (IOException e) {
             throw new RuntimeException("ERROR: server not created", e);
         }
 
 
-        ProductRepository productobject = new ProductRepository(dbConnection);
+        ProductRepository productobject = new ProductRepository(dbConnection, aesKey);
 
         server.createContext("/getallproducts", exchange -> {
 
             StringBuilder response = new StringBuilder();
 
-            for (Product c : productobject.getAll()) {
+            for (Product c : productobject.getAllProducts()) {
                 response
                         .append(c.getproductID())
                         .append(" | ")
@@ -78,7 +86,7 @@ public class Main {
         });
 
 
-        server.createContext("/importaccounts", exchange -> {
+        server.createContext("/importproducts", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 byte[] bytes = "ERROR: Only POST allowed".getBytes();
                 exchange.sendResponseHeaders(405, bytes.length);
@@ -86,10 +94,10 @@ public class Main {
                 exchange.close();
                 return;
             }
-            String body = new String(exchange.getRequestBody().readAllBytes());
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8 );
             boolean ok;
             try {
-                ok = ProductRepository.importAccounts(dbConnection, body);
+                ok = productobject.importProducts(body);
             } catch (SQLException e) {
                 byte[] bytes = ("DB ERROR: " + e.getMessage()).getBytes();
                 exchange.sendResponseHeaders(500, bytes.length);
@@ -103,6 +111,57 @@ public class Main {
             exchange.close();
         });
 
+        server.createContext("/deleteproducts", exchange -> {
+            if (!"DELETE".equalsIgnoreCase(exchange.getRequestMethod())) {
+                byte[] bytes = "ERROR: Only DELETE allowed".getBytes();
+                exchange.sendResponseHeaders(405, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8 );
+            boolean ok;
+            try {
+                ok = ProductRepository.deleteProducts(dbConnection, body);
+            } catch (Exception e) {
+                byte[] bytes = ("DB ERROR: " + e.getMessage()).getBytes();
+                exchange.sendResponseHeaders(500, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
+
+            byte[] bytes = (ok ? "OK" : "ERROR").getBytes();
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+
+        server.createContext("/editproducts", exchange -> {
+            if (!"PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
+                byte[] bytes = "ERROR: Only PATCH allowed".getBytes();
+                exchange.sendResponseHeaders(405, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8 );
+            boolean ok;
+            try {
+                ok = productobject.editProducts(body);
+
+            } catch (SQLException e) {
+                byte[] bytes = ("DB ERROR: " + e.getMessage()).getBytes();
+                exchange.sendResponseHeaders(500, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
+            byte[] bytes = (ok ? "OK" : "ERROR").getBytes();
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
 
 
         server.start();
