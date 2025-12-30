@@ -185,76 +185,6 @@ public class ProductRepository {
         }
     }
 
-     public boolean moveProductsInSoldTable(String idsToMove, String transactionCode)  {
-             Connection conn = null;
-             String sqlRequest = "SELECT * FROM products WHERE productid = ?";
-             String sqlRequestInsertIntoSold = "INSERT INTO soldproducts (steamlogin, steampassword, emailaddress, emailpassword, transactioncode) VALUES (?, ?, ?, ?, ?)";
-             String sqlRequestToDelete = "DELETE FROM products WHERE productid = ?";
-         try{ conn = db.getConnection(); conn.setAutoCommit(false);
-
-             try (PreparedStatement stmt = conn.prepareStatement(sqlRequest); PreparedStatement stmtIntoSoldTable = conn.prepareStatement(sqlRequestInsertIntoSold);
-             PreparedStatement stmtToDelete = conn.prepareStatement(sqlRequestToDelete);) {
-
-            for (String idToMoveNow : idsToMove.split("\\R")) {
-                idToMoveNow = idToMoveNow.trim();
-                if (idToMoveNow.isBlank()) {
-                    continue;
-                }
-                if(!isNumber(idToMoveNow)){
-                    continue;
-                }
-
-                stmt.setInt(1, Integer.parseInt(idToMoveNow));
-                ResultSet rs = stmt.executeQuery();
-                Product p = null;
-                if (rs.next()) {
-                   p = new Product(
-                           rs.getString("productid"),
-                           rs.getString("steamlogin"),
-                           CryptoUtil.decrypt(rs.getString("steampassword"), aesKey),
-                           rs.getString("emailaddress"),
-                           CryptoUtil.decrypt(rs.getString("emailpassword"), aesKey)
-                   );
-                }
-                if (p != null) {
-                    stmtIntoSoldTable.setString(1, p.getSteamLogin());
-                    stmtIntoSoldTable.setString(2, CryptoUtil.encrypt(p.getSteamPassword(), aesKey));
-                    stmtIntoSoldTable.setString(3, p.getEmailAddress());
-                    stmtIntoSoldTable.setString(4, CryptoUtil.encrypt(p.getEmailPassword(), aesKey));
-                    stmtIntoSoldTable.setString(5, transactionCode);
-                    stmtIntoSoldTable.addBatch();
-
-                    stmtToDelete.setInt(1, Integer.parseInt(idToMoveNow));
-                    stmtToDelete.addBatch();
-                }
-            }
-            stmtIntoSoldTable.executeBatch();
-            stmtToDelete.executeBatch();
-            conn.commit();
-            return true;
-        }
-         }
-       catch (Exception e) {
-                 try {
-                     if (conn != null) { conn.rollback(); }
-                 }
-                 catch (Exception ignored) {}
-
-                 System.out.println("ERROR: Something went wrong while moving products!");
-                 e.printStackTrace();
-                 return false;
-
-             } finally {
-                 try {
-                     if (conn != null) {
-                         conn.setAutoCommit(true);
-                         conn.close();
-                     }
-                 } catch (Exception ignored) {}
-             }
-         }
-
-
     public String importMafiles(InputStream zipStream) {
         int saved = 0;int skipped = 0;
         try (ZipInputStream zis = new ZipInputStream(zipStream); Connection conn = db.getConnection()) {
@@ -281,17 +211,10 @@ public class ProductRepository {
         }
     }
 
-
     public String moveMafilesToSold(String body) {
-        int moved = 0;
-        int skipped = 0;
-
+        int moved = 0;int skipped = 0;
         String sql = "SELECT steamlogin FROM products WHERE productid = ?";
-
-        try (
-                Connection conn = db.getConnection();
-                PreparedStatement ps = conn.prepareStatement(sql)
-        ) {
+        try (Connection conn = db.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             Path fromDir = Path.of("productsMafile");
             Path toDir = Path.of("productsMafileSold");
             Files.createDirectories(toDir);

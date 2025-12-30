@@ -182,60 +182,9 @@ public class Main {
             exchange.close();
         });
 
-        server.createContext("/movesoldproducts", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                byte[] bytes = "ERROR: Only POST allowed".getBytes();
-                exchange.sendResponseHeaders(405, bytes.length);
-                exchange.getResponseBody().write(bytes);
-                exchange.close();
-                return;
-            }
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8 );
-            boolean FirstRow = true; String TransactionKey = ""; String IdsToMove ="";
-            for (String line : body.split("\\R")) {
-                line = line.trim();
-                if (FirstRow) {
-                    TransactionKey = line;
-                    FirstRow = false;
-                    continue;
-                }
-                if (line.isBlank()) continue;
-                if (!ProductRepository.isNumber(line)) continue;
 
-                IdsToMove = IdsToMove + line + "\n";
-            }
-            boolean ok;
-            try {
-                ok = productobject.moveProductsInSoldTable(IdsToMove, TransactionKey);
 
-            } catch (Exception e) {
-                byte[] bytes = ("DB ERROR: " + e.getMessage()).getBytes();
-                exchange.sendResponseHeaders(500, bytes.length);
-                exchange.getResponseBody().write(bytes);
-                exchange.close();
-                return;
-            }
-            byte[] bytes = (ok ? "OK" : "ERROR").getBytes();
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
-            exchange.close();
-        });
-
-        server.createContext("/importmafiles", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                exchange.close();
-                return;
-            }
-
-            String result = productobject.importMafiles(exchange.getRequestBody());
-            byte[] resp = result.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(result.startsWith("OK") ? 200 : 500, resp.length);
-            exchange.getResponseBody().write(resp);
-            exchange.close();
-        });
-
-        server.createContext("/movesoldmafiles", exchange -> {
+        server.createContext("/buyproducts", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 exchange.close();
