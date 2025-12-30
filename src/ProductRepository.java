@@ -5,6 +5,10 @@ import java.nio.file.Path;
 import javax.crypto.SecretKey;
 import java.sql.*;
 import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipEntry;
+import java.nio.file.StandardCopyOption;
 
 
 public class ProductRepository {
@@ -28,6 +32,15 @@ public class ProductRepository {
         return email != null && email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$");
     }
 
+    public boolean checkSteamLogin(Connection conn, String login) throws SQLException {
+        String sql = "SELECT 1 FROM products WHERE steamlogin = ? LIMIT 1";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, login);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
 
 
     public List<Product> getAllProducts() {
@@ -92,7 +105,7 @@ public class ProductRepository {
     }
 }
 
-    static public boolean deleteProducts(DataBaseConnector db,String idsToDelete)  {
+     public boolean deleteProducts(String idsToDelete)  {
         int Counter = 0;
         String sqlRequest = " DELETE FROM products WHERE productid = ?";
         try (Connection conn = db.getConnection(); PreparedStatement stmt = conn.prepareStatement(sqlRequest);) {
@@ -171,5 +184,177 @@ public class ProductRepository {
             return false;
         }
     }
+
+     public boolean moveProductsInSoldTable(String idsToMove, String transactionCode)  {
+             Connection conn = null;
+             String sqlRequest = "SELECT * FROM products WHERE productid = ?";
+             String sqlRequestInsertIntoSold = "INSERT INTO soldproducts (steamlogin, steampassword, emailaddress, emailpassword, transactioncode) VALUES (?, ?, ?, ?, ?)";
+             String sqlRequestToDelete = "DELETE FROM products WHERE productid = ?";
+         try{ conn = db.getConnection(); conn.setAutoCommit(false);
+
+             try (PreparedStatement stmt = conn.prepareStatement(sqlRequest); PreparedStatement stmtIntoSoldTable = conn.prepareStatement(sqlRequestInsertIntoSold);
+             PreparedStatement stmtToDelete = conn.prepareStatement(sqlRequestToDelete);) {
+
+            for (String idToMoveNow : idsToMove.split("\\R")) {
+                idToMoveNow = idToMoveNow.trim();
+                if (idToMoveNow.isBlank()) {
+                    continue;
+                }
+                if(!isNumber(idToMoveNow)){
+                    continue;
+                }
+
+                stmt.setInt(1, Integer.parseInt(idToMoveNow));
+                ResultSet rs = stmt.executeQuery();
+                Product p = null;
+                if (rs.next()) {
+                   p = new Product(
+                           rs.getString("productid"),
+                           rs.getString("steamlogin"),
+                           CryptoUtil.decrypt(rs.getString("steampassword"), aesKey),
+                           rs.getString("emailaddress"),
+                           CryptoUtil.decrypt(rs.getString("emailpassword"), aesKey)
+                   );
+                }
+                if (p != null) {
+                    stmtIntoSoldTable.setString(1, p.getSteamLogin());
+                    stmtIntoSoldTable.setString(2, CryptoUtil.encrypt(p.getSteamPassword(), aesKey));
+                    stmtIntoSoldTable.setString(3, p.getEmailAddress());
+                    stmtIntoSoldTable.setString(4, CryptoUtil.encrypt(p.getEmailPassword(), aesKey));
+                    stmtIntoSoldTable.setString(5, transactionCode);
+                    stmtIntoSoldTable.addBatch();
+
+                    stmtToDelete.setInt(1, Integer.parseInt(idToMoveNow));
+                    stmtToDelete.addBatch();
+                }
+            }
+            stmtIntoSoldTable.executeBatch();
+            stmtToDelete.executeBatch();
+            conn.commit();
+            return true;
+        }
+         }
+       catch (Exception e) {
+                 try {
+                     if (conn != null) { conn.rollback(); }
+                 }
+                 catch (Exception ignored) {}
+
+                 System.out.println("ERROR: Something went wrong while moving products!");
+                 e.printStackTrace();
+                 return false;
+
+             } finally {
+                 try {
+                     if (conn != null) {
+                         conn.setAutoCommit(true);
+                         conn.close();
+                     }
+                 } catch (Exception ignored) {}
+             }
+         }
+
+
+    public String importMafiles(InputStream zipStream) {
+        int saved = 0;int skipped = 0;
+        try (ZipInputStream zis = new ZipInputStream(zipStream); Connection conn = db.getConnection()) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.isDirectory()) { continue; }
+
+                String name = Path.of(entry.getName()).getFileName().toString();
+                if (!name.endsWith(".maFile")) { skipped++; continue; }
+
+                String login = name.substring(0, name.length() - ".maFile".length());
+                if (!checkSteamLogin(conn, login)) { skipped++; continue; }
+
+                Path out = Path.of("productsMafile", name);
+                Files.createDirectories(out.getParent());
+                Files.copy(zis, out, StandardCopyOption.REPLACE_EXISTING);
+
+                saved++;
+                zis.closeEntry();
+            }
+            return "OK\nsaved=" + saved + "\nskipped=" + skipped;
+        } catch (Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+
+    public String moveMafilesToSold(String body) {
+        int moved = 0;
+        int skipped = 0;
+
+        String sql = "SELECT steamlogin FROM products WHERE productid = ?";
+
+        try (
+                Connection conn = db.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)
+        ) {
+            Path fromDir = Path.of("productsMafile");
+            Path toDir = Path.of("productsMafileSold");
+            Files.createDirectories(toDir);
+
+            for (String line : body.split("\\R")) {
+                String id = line.trim();
+                if (id.isBlank()) continue;
+                if (!isNumber(id)) { skipped++; continue; }
+                ps.setInt(1, Integer.parseInt(id));
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        skipped++;
+                        continue;
+                    }
+                    String steamLogin = rs.getString("steamlogin");
+                    Path src = fromDir.resolve(steamLogin + ".maFile");
+                    Path dst = toDir.resolve(steamLogin + ".maFile");
+                    if (!Files.exists(src)) {
+                        skipped++;
+                        continue;
+                    }
+                    Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                    moved++;
+                }
+            }
+            return "OK\nmoved=" + moved + "\nskipped=" + skipped;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    public boolean checkMafileExistence() {
+        String selectSql = "SELECT productid, steamlogin FROM products";
+        String updateSql = "UPDATE products SET mafileexistence = ? WHERE productid = ?";
+        try (
+                Connection conn = db.getConnection();
+                PreparedStatement selectStmt = conn.prepareStatement(selectSql);
+                PreparedStatement updateStmt = conn.prepareStatement(updateSql)
+        ) {
+            conn.setAutoCommit(false);
+            ResultSet rs = selectStmt.executeQuery();
+            while (rs.next()) {
+                int productId = rs.getInt("productid");
+                String login = rs.getString("steamlogin");
+
+                Path mafile = Path.of("productsMafile", login + ".maFile");
+                boolean exists = Files.exists(mafile);
+
+                updateStmt.setBoolean(1, exists);
+                updateStmt.setInt(2, productId);
+                updateStmt.addBatch();
+            }
+            updateStmt.executeBatch();
+            conn.commit();
+            return true;
+
+        } catch (Exception e) {
+            System.out.println("ERROR: Something went wrong while checking product mafiles!");
+            e.printStackTrace();
+            return false;
+        }
+    }
+
 
 }
