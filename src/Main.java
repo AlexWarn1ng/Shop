@@ -27,13 +27,14 @@ public class Main {
         String port = p.getProperty("port");
         String database = p.getProperty("database");
         String aesKeyBase64 = p.getProperty("aes_key");
+        String price = p.getProperty("price");
         if (aesKeyBase64 == null || aesKeyBase64.isEmpty()) {
             throw new RuntimeException("aes_key is missing in config.txt");
         }
         SecretKey aesKey = CryptoUtil.keyFromBase64(aesKeyBase64);
 
         try{
-            if (username == null || password == null || addressHost == null || database == null || port == null || port.isEmpty() || username.isEmpty() || password.isEmpty() || addressHost.isEmpty() || database.isEmpty()){
+            if (price == null || username == null || password == null || addressHost == null || database == null || port == null || port.isEmpty() || username.isEmpty() || password.isEmpty() || addressHost.isEmpty() || database.isEmpty() || price.isEmpty()){
                 throw new RuntimeException("ERROR: One or more fields are empty in config.txt");                }
             }
         catch(Exception e) {
@@ -47,9 +48,12 @@ public class Main {
             System.out.println("port=" + port);
             System.out.println("database=" + database);
             System.out.println("SecretKey (AesKey) LOADED");
+            System.out.println("price (PER UNIT)=" + price);
 
         DataBaseConnector dbConnection = new DataBaseConnector(username, password, addressHost, port, database);
         HttpServer server;
+
+        Double pricePerUnit = Double.parseDouble(price); // CREATE NEW PRICE VAR AND MAKE IT DOUBLE
 
         try {
             server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -60,6 +64,7 @@ public class Main {
 
 
         ProductRepository productobject = new ProductRepository(dbConnection, aesKey);
+        NowPaymentsApi nowObjectForApi = new NowPaymentsApi("RNFVZ6Y-GXHMTR3-KYQZ5D8-8BQ1QMS");
 
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -182,23 +187,6 @@ public class Main {
             exchange.close();
         });
 
-
-
-        server.createContext("/buyproducts", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                exchange.close();
-                return;
-            }
-            String body = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            String result = productobject.moveMafilesToSold(body);
-
-            byte[] resp = result.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(result.startsWith("OK") ? 200 : 500, resp.length);
-            exchange.getResponseBody().write(resp);
-            exchange.close();
-        });
-
         server.createContext("/checkmafileexistence", exchange -> {
             if (!"PATCH".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
@@ -214,9 +202,126 @@ public class Main {
         });
 
 
+        server.createContext("/buyproducts", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+
+            String result;
+            int httpCode = 200;
+
+            try {
+                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).trim();
+                int count = Integer.parseInt(body);
+                if (count <= 0) throw new IllegalArgumentException("count must be > 0");
+
+                String reservedIds;
+                String transactionKey;
+
+                try (BuyProduct currentPurchase = new BuyProduct(aesKeyBase64, username, password, addressHost, port, database)) {
+                    currentPurchase.begin();
+                    reservedIds = currentPurchase.reserveProducts(count);
+                    transactionKey = currentPurchase.getTransactionKey();
+                    currentPurchase.commit();
+                }
+
+                if (reservedIds == null || reservedIds.isBlank()) {
+                    result = "ERROR: not enough products to reserve (Zero products exception)";
+                    System.out.println(result);
+                    httpCode = 409;
+                } else {
+                    double total = count * pricePerUnit;
+                    String orderId = NowPaymentsApi.newOrderId();
+                    String desc = "Accounts x" + count;
+
+                    String packed = nowObjectForApi.createInvoice(total, orderId, desc);
+                    String[] parts = packed.split("\\|", 2);
+                    String invoiceId = parts[0];
+                    String invoiceUrl = parts[1];
+
+                    String payCurrency = "trx";
+                    long paymentId = nowObjectForApi.createPaymentByInvoice(invoiceId, payCurrency);
+                    productobject.savePendingOrder(orderId, transactionKey, count, total, invoiceUrl, invoiceId);
+                    result =
+                            "OK\n" +
+                                    "transaction_key=" + transactionKey + "\n" +
+                                    "order_id=" + orderId + "\n" +
+                                    "invoice_id=" + invoiceId + "\n" +
+                                    "payment_id=" + paymentId + "\n" +
+                                    "pay_currency=" + payCurrency + "\n" +
+                                    "invoice_url=" + invoiceUrl + "\n" +
+                                    "amount_usd=" + total + "\n" +
+                                    "reserved_ids=\n" + reservedIds;
+
+                    System.out.println(result);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                result = "ERROR: " + e.getMessage();
+                httpCode = 500;
+            }
+            byte[] resp = result.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(httpCode, resp.length);
+            exchange.getResponseBody().write(resp);
+            exchange.close();
+        });
 
 
-        server.start();
+        server.createContext("/checkpayment", exchange -> {
+                    if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                        exchange.sendResponseHeaders(405, -1);
+                        exchange.close();
+                        return;
+                    }
+                    String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).trim();
+                    long paymentId;
+                    try {
+                        paymentId = Long.parseLong(body);
+                    } catch (Exception e) {
+                        byte[] resp = "ERROR: send payment_id as a NUMBER".getBytes(StandardCharsets.UTF_8);
+                        exchange.sendResponseHeaders(400, resp.length);
+                        exchange.getResponseBody().write(resp);
+                        exchange.close();
+                        return;
+                    }
+
+                    try(BuyProduct currentPurchase = new BuyProduct(aesKeyBase64, username, password, addressHost, port, database)) {
+                        String status = nowObjectForApi.checkPaymentStatus(paymentId);
+
+                        if ("finished".equalsIgnoreCase(status) || "confirmed".equalsIgnoreCase(status) || "paid".equalsIgnoreCase(status)) {
+                            currentPurchase.begin();
+                            String transkey = currentPurchase.getTransactionKey();
+                            String ids = productobject.getReservedIdsByTransactionKey(transkey);
+
+                            productobject.markOrderPaid(transkey);
+                            currentPurchase.moveProductsInSoldTable(ids);
+                            productobject.moveMafilesToSold(ids);
+
+                            String result = "OK\npayment_id=" + paymentId + "\nstatus=" + status + "\naction=FULFILLED";
+                            byte[] resp = result.getBytes(StandardCharsets.UTF_8);
+                            exchange.sendResponseHeaders(200, resp.length);
+                            exchange.getResponseBody().write(resp);
+                            exchange.close();
+                            return;
+                        }
+                        String result = "OK\npayment_id=" + paymentId + "\nstatus=" + status;
+                        byte[] resp = result.getBytes(StandardCharsets.UTF_8);
+                        exchange.sendResponseHeaders(200, resp.length);
+                        exchange.getResponseBody().write(resp);
+                        exchange.close();
+
+                    } catch (Exception e) {
+                        String result = "ERROR: " + e.getMessage();
+                        byte[] resp = result.getBytes(StandardCharsets.UTF_8);
+                        exchange.sendResponseHeaders(500, resp.length);
+                        exchange.getResponseBody().write(resp);
+                        exchange.close();
+                    }
+        });
+
+            server.start();
         System.out.println("Server started on http://localhost:8080");
     }
 }

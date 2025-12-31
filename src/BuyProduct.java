@@ -1,22 +1,23 @@
 import java.sql.*;
 import java.security.SecureRandom;
-import java.util.stream.Collectors;
-import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
-import java.util.Base64;
-import java.util.ArrayList;
-import java.util.List;
 
-public class BuyProduct {
-    private String TransactionKey;
-    private SecretKey aesKey;
+public class BuyProduct implements AutoCloseable{
+    private final String TransactionKey;
+    private final SecretKey aesKey;
     private Connection conn;
     private static final String SymbolsForTransactionKey = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    public String getTransactionKey(){
+        return TransactionKey;
+    }
+
+    public void close() {
+        try {
+            if (conn != null) conn.close();
+        } catch (Exception ignored) {}
+    }
 
     private static String generateRandomString(int length) {
         StringBuilder sb = new StringBuilder(length);
@@ -55,6 +56,8 @@ public BuyProduct(String aesKey, String username, String password, String addres
 
     public String reserveProducts(int count) throws SQLException {
         StringBuilder result = new StringBuilder();
+        int actualCount = 0;
+
         String sql =
                 "UPDATE products SET reservedcode = ? " +
                         "WHERE productid IN (" +
@@ -66,14 +69,26 @@ public BuyProduct(String aesKey, String username, String password, String addres
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, TransactionKey);
             stmt.setInt(2, count);
+
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
                     result.append(rs.getInt("productid")).append("\n");
+                    actualCount++;
                 }
             }
         }
+
+        if (actualCount < count) {
+            String undoSql = "UPDATE products SET reservedcode = NULL WHERE reservedcode = ?";
+            try (PreparedStatement undo = conn.prepareStatement(undoSql)) {
+                undo.setString(1, TransactionKey);
+                undo.executeUpdate();
+            }
+            throw new SQLException("Not Enough products to buy. Try to choose less of them");
+        }
         return result.toString().trim();
     }
+
 
 
 

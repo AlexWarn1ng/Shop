@@ -279,5 +279,61 @@ public class ProductRepository {
         }
     }
 
+    public void savePendingOrder(String orderId, String transactionKey, int count, double amountUsd, String invoiceUrl, String invoiceId) throws SQLException {
+        String sql = "INSERT INTO pendingorders (order_id, transaction_key, count, amount_usd, invoice_url, invoice_id) VALUES (?, ?, ?, ?, ?, ?)";
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, orderId);
+            ps.setString(2, transactionKey);
+            ps.setInt(3, count);
+            ps.setBigDecimal(4, java.math.BigDecimal.valueOf(amountUsd));
+            ps.setString(5, invoiceUrl);
+            ps.setString(6, invoiceId);
+
+            ps.executeUpdate();
+        }
+    }
+
+    public String[] getPendingOrder(String orderId) throws SQLException {
+        String sql = "SELECT transaction_key, invoice_url, status FROM pendingorders WHERE order_id = ?";
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                return new String[] {
+                        rs.getString("transaction_key"),
+                        rs.getString("invoice_url"),
+                        rs.getString("status")
+                };
+            }
+        }
+    }
+
+    public void markOrderPaid(String transactionkey) throws SQLException {
+        String sql = "UPDATE pendingorders SET status = 'paid' WHERE transaction_key = ?";
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, transactionkey);
+            ps.executeUpdate();
+        }
+    }
+
+    // берём все productid где reservedcode = transactionKey (и reservedcode NOT NULL)
+    public String getReservedIdsByTransactionKey(String transactionKey) throws SQLException {
+        String sql = "SELECT productid FROM products WHERE reservedcode = ?";
+        StringBuilder sb = new StringBuilder();
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, transactionKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    sb.append(rs.getInt("productid")).append("\n");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
 
 }
