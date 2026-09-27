@@ -1,7 +1,7 @@
 import java.sql.*;
 import java.security.SecureRandom;
 import javax.crypto.SecretKey;
-
+ 
 public class BuyProduct implements AutoCloseable{
     private final String TransactionKey;
     private final SecretKey aesKey;
