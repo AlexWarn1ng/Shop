@@ -53,7 +53,7 @@ public class Main {
         DataBaseConnector dbConnection = new DataBaseConnector(username, password, addressHost, port, database);
         HttpServer server;
 
-        Double pricePerUnit = Double.parseDouble(price); // CREATE NEW PRICE VAR AND MAKE IT DOUBLE
+        Double pricePerUnit = Double.parseDouble(price); 
 
         try {
             server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -322,7 +322,6 @@ public class Main {
         });
 
             server.start();
-        System.out.println("Server started on http://localhost:8080");
     }
 }
 
