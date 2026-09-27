@@ -106,8 +106,6 @@ public class NowPaymentsApi {
         return pid;
     }
 
-
-    // У тебя extractJsonString не достанет число payment_id, поэтому добавь это:
     private static Long extractJsonLong(String json, String key) {
         String needle = "\"" + key + "\"";
         int i = json.indexOf(needle);
