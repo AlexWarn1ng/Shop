@@ -8,12 +8,10 @@ import java.util.Base64;
 
 public final class CryptoUtil {
     private static final String ALGO = "AES/GCM/NoPadding";
-    private static final int IV_LEN = 12;          // 96-bit IV для GCM
-    private static final int TAG_LEN_BITS = 128;   // 16 bytes tag
+    private static final int IV_LEN = 12;          
+    private static final int TAG_LEN_BITS = 128;   
     private static final SecureRandom RNG = new SecureRandom();
 
-    // 32 байта = AES-256. Храни этот ключ НЕ в коде, а в config/env.
-    // Здесь просто пример: Base64 ключ.
     public static SecretKey keyFromBase64(String base64Key) {
         byte[] raw = Base64.getDecoder().decode(base64Key);
         return new SecretKeySpec(raw, "AES");
@@ -30,7 +28,6 @@ public final class CryptoUtil {
 
             byte[] ct = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
 
-            // сохраняем iv + ciphertext в одной строке
             byte[] out = new byte[iv.length + ct.length];
             System.arraycopy(iv, 0, out, 0, iv.length);
             System.arraycopy(ct, 0, out, iv.length, ct.length);
